@@ -1,4 +1,4 @@
-const { KEYGEN_ACCOUNT_ID } = process.env
+const { DEBUG, KEYGEN_ACCOUNT_ID } = process.env
 if (!KEYGEN_ACCOUNT_ID) {
   throw Error('Environment variable KEYGEN_ACCOUNT_ID is required')
 }
@@ -45,10 +45,7 @@ async function activateMachine(fingerprint, { key } = {}) {
   if (meta.valid) {
     const machine = await retrieveMachine(fingerprint, { key })
 
-    return {
-      activated: false,
-      machine,
-    }
+    return machine
   }
 
   // If we've gotten this far, our license is not valid for the current
@@ -104,10 +101,7 @@ async function activateMachine(fingerprint, { key } = {}) {
   }
 
   // All is good - the machine was successfully activated.
-  return {
-    activated: true,
-    machine,
-  }
+  return machine
 }
 
 async function deactivateMachine(id, { key } = {}) {
@@ -146,40 +140,140 @@ async function retrieveMachine(id, { key } = {}) {
   return machine
 }
 
+async function spawnProcess(pid, { machine, key } = {}) {
+  const spawn = await fetch(`https://api.keygen.sh/v1/accounts/${KEYGEN_ACCOUNT_ID}/processes`, {
+    method: 'POST',
+    headers: {
+      'Authorization': `License ${key}`,
+      'Content-Type': 'application/vnd.api+json',
+      'Accept': 'application/vnd.api+json',
+    },
+    body: JSON.stringify({
+      data: {
+        type: 'processes',
+        attributes: {
+          pid
+        },
+        relationships: {
+          machine: {
+            data: { type: 'machines', id: machine.id }
+          }
+        }
+      }
+    })
+  })
+
+  const { data: process, errors } = await spawn.json()
+  if (errors) {
+    throw new Error(JSON.stringify(errors, null, 2))
+  }
+
+  return process
+}
+
+async function killProcess(id, { key } = {}) {
+  const kill = await fetch(`https://api.keygen.sh/v1/accounts/${KEYGEN_ACCOUNT_ID}/processes/${encodeURIComponent(id)}`, {
+    method: 'DELETE',
+    headers: {
+      'Authorization': `License ${key}`,
+      'Accept': 'application/vnd.api+json',
+    }
+  })
+
+  if (kill.status === 204) {
+    return
+  }
+
+  const { errors } = await kill.json()
+  if (errors) {
+    throw new Error(JSON.stringify(errors, null, 2))
+  }
+}
+
+function monitorProcess(id, { frequency, key } = {}) {
+  console.log(
+    chalk.yellow(`Heartbeat monitor started... (process ${id})`)
+  )
+
+  const interval = setInterval(async () => {
+    await pingProcess(id, { key }) // Send pings on an interval
+
+    console.log(
+      chalk.green(`Heartbeat ping successfully sent (process ${id})`)
+    )
+  }, (frequency - 30) * 1000)
+
+  return () => {
+    console.log(
+      chalk.yellow(`Heartbeat monitor stopping... (process ${id})`)
+    )
+
+    clearInterval(interval)
+  }
+}
+
+async function pingProcess(id, { key } = {}) {
+  const ping = await fetch(`https://api.keygen.sh/v1/accounts/${KEYGEN_ACCOUNT_ID}/processes/${encodeURIComponent(id)}/actions/ping`, {
+    method: 'POST',
+    headers: {
+      'Authorization': `License ${key}`,
+      'Accept': 'application/vnd.api+json',
+    }
+  })
+
+  const { data: process, errors } = await ping.json()
+  if (errors) {
+    throw new Error(JSON.stringify(errors, null, 2))
+  }
+
+  return process
+}
+
 async function main() {
   const key = await prompt('Enter a license key')
   const fingerprint = await machineId()
+  const pid = process.pid.toString()
 
   try {
-    const { machine, activated } = await activateMachine(fingerprint, { key })
-    if (activated) {
-      console.log(
-        chalk.green(`The machine was successfully activated (${machine.id})`)
-      )
-    } else if (machine) {
-      console.log(
-        chalk.yellow(`The machine has already been activated (${machine.id})`)
-      )
-
-      const answer = await prompt('Do you want to deactivate this machine? [y/N]')
-      if (`${answer}`.toLowerCase() === 'y') {
-        await deactivateMachine(fingerprint, { key })
-
-        console.log(
-          chalk.green(`The machine was successfully deactivated (${machine.id})`)
-        )
-      }
-    } else {
-      console.log(
-        chalk.yellow(`The machine has already been activated, but a cached copy of it's data could not be found. Maybe it was activated on another device or through the dashboard UI?`)
-      )
-    }
-
-    process.exit(0)
-  } catch (err) {
-    console.error(
-      chalk.red(`An error has occurred:\n${err.message}`)
+    const machine = await activateMachine(fingerprint, { key })
+    console.log(
+      chalk.green(`Machine successfully activated (machine ${machine.id})`)
     )
+
+    const proc = await spawnProcess(pid, { machine, key })
+    console.log(
+      chalk.green(`Process successfully spawned (process ${proc.id})`)
+    )
+
+    // Maintain heartbeat
+    const cancel = monitorProcess(proc.id, {
+      frequency: proc.attributes.interval,
+      key,
+    })
+
+    // Kill process on process exit
+    process.on('SIGINT', async () => {
+      await killProcess(proc.id, { key })
+      cancel()
+
+      console.log(
+        chalk.yellow(`Process successfully killed (process ${proc.id})`)
+      )
+
+      console.log(
+        chalk.yellow('Exiting...')
+      )
+
+      process.exit(0)
+    })
+  } catch (e) {
+    console.error(
+      chalk.red(`An error has occurred:\n${e.message}`)
+    )
+
+    if (DEBUG) {
+      console.error(e)
+    }
 
     process.exit(1)
   }

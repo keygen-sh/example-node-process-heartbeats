@@ -1,8 +1,11 @@
-# Example Machine Activation
+# Example Process Heartbeats
 
-This is an example of a typical machine activation flow. You may of course
-choose to implement a different flow if required - this only serves as an
-example implementation.
+This is an example of machine activation and process heartbeats. Machine
+activation allows you to limit the number of devices used by a license,
+while processes allow you to limit application concurrency.
+
+For example, the `demo` credentials will allow up to 3 machine activations
+and up to 3 concurrent processes across all machines.
 
 ## Running the example
 
