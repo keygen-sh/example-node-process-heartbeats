@@ -26,18 +26,18 @@ Next, install dependencies with [`yarn`](https://yarnpkg.comg):
 yarn
 ```
 
-## Activating/deactivating a machine
+## Activating a machine
 
-To perform a machine activation or a deactivation, run the script and
-supply a valid license key and an arbitrary machine fingerprint when
-prompted:
+To perform a machine activation, run the script and supply a valid
+license key:
 
 ```bash
 yarn start
 ```
 
-If the current machine has already been activated, you will be prompted
-to deactivate it.
+If the license key is valid, the script will attempt to active the
+current machine and then it will maintain process heartbeats,
+until a `SIGINT` signal is sent to the process.
 
 To use `demo` credentials, you can run the following:
 
